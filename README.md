@@ -56,6 +56,19 @@ Both installers prompt by default and accept `--noprompt` / `-y` / `--all`, `--h
 
 ---
 
+## Scanning Piped Input
+With no file arguments, piped or redirected input is scanned automatically. Use `-` to request stdin explicitly, which is the safer choice in scripts:
+
+```bash
+git log | detect_emdash.py
+git log | detect_emdash.py --exit-code -q
+detect_emdash.py --fix - < notes.txt > clean.txt
+```
+
+With `--fix`, the cleaned text goes to stdout and reports go to stderr.
+
+---
+
 ## How It Works Under the Hood
 1. Copies `detect_emdash.py` and `pre-commit` into `~/.git_hooks/`.
 2. Runs `git config --global core.hooksPath ~/.git_hooks`, saving any previous value as `core.hooksPathBackup`.

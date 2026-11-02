@@ -172,3 +172,27 @@ def test_soft_hyphen_deleted_wave_dash_kept(tmp_path):
     f.write_text('co\u00adoperate 5\u301c10\n', encoding='utf-8')
     run_cli(tmp_path, '-q', '--fix', 't')
     assert f.read_text(encoding='utf-8') == 'cooperate 5\u301c10\n'
+
+
+def run_stdin(tmp_path, data, *args):
+    return subprocess.run([sys.executable, os.path.join(SRC, 'detect_emdash.py'), *args],
+                          cwd=tmp_path, input=data, capture_output=True)
+
+
+def test_piped_stdin_auto_detected(tmp_path):
+    r = run_stdin(tmp_path, b'ok\na' + EM + b'b\n', '--exit-code')
+    assert r.returncode == 1
+    assert b'<stdin>:2:' in r.stdout
+
+
+def test_stdin_fix_is_a_clean_filter(tmp_path):
+    r = run_stdin(tmp_path, b'a' + EM + b'b\r\n\xff\n', '--fix', '-')
+    assert r.stdout == b'a-b\r\n\xff\n'
+    assert b'SUMMARY' in r.stderr
+
+
+def test_dev_null_stdin_still_scans_directory(tmp_path):
+    (tmp_path / 'f').write_bytes(b'a' + EM + b'b\n')
+    r = subprocess.run([sys.executable, os.path.join(SRC, 'detect_emdash.py'), '--exit-code', '-q'],
+                       cwd=tmp_path, stdin=subprocess.DEVNULL, capture_output=True)
+    assert r.returncode == 1

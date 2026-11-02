@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import sys
 
 # Comprehensive target dash variants to detect and replace
@@ -32,6 +33,9 @@ DEFAULT_IGNORE_DIRS = {'.git', '.venv', 'venv', '__pycache__', 'node_modules', '
 # Replacement character: Regular ASCII Hyphen-Minus U+002D
 REPLACEMENT_CHAR = '-'
 REPLACEMENT_UNICODE = 'U+002D'
+
+# File argument meaning stdin (a file really named '-' can be passed as ./-)
+STDIN_TARGET = '-'
 
 # Invisible characters are deleted: a visible '-' would change the rendered text
 REMOVE_CHARS = {'\u00ad'}
@@ -182,6 +186,42 @@ def process_file(filepath: str, verbose: bool = True, fix: bool = False, dry_run
     return dash_found, file_summary, replacements_made, is_excluded, file_error
 
 
+def stdin_has_data() -> bool:
+    """Return True if stdin is a pipe or redirected file, not a terminal or /dev/null."""
+    try:
+        mode = os.fstat(sys.stdin.fileno()).st_mode
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISFIFO(mode) or stat.S_ISREG(mode)
+
+
+def process_stdin(output, verbose: bool = True, fix: bool = False, dry_run: bool = False) -> tuple:
+    """Scan stdin; with fix (and not dry_run) write the cleaned text to output as a filter.
+    Returns the same tuple as process_file.
+    """
+    # surrogateescape round-trips any non-UTF-8 bytes unchanged
+    content = sys.stdin.buffer.read().decode('utf-8', 'surrogateescape')
+    file_summary = {}
+    for line_num, line in enumerate(content.split('\n'), 1):
+        categories = categorize_dashes(line)
+        if categories and verbose:
+            display_line = line.rstrip('\r').encode('utf-8', 'surrogateescape').decode('utf-8', 'replace')
+            print(f"<stdin>:{line_num}: {display_line}")
+        for category, data in categories.items():
+            if category in file_summary:
+                file_summary[category]['count'] += data['count']
+            else:
+                file_summary[category] = dict(data)
+
+    new_content, replacements_made = replace_dashes_in_text(content)
+    if not fix:
+        replacements_made = 0
+    elif not dry_run:
+        output.write(new_content.encode('utf-8', 'surrogateescape'))
+        output.flush()
+    return bool(file_summary), file_summary, replacements_made, False, False
+
+
 def scan_directory(path: str, recursive: bool = False):
     """Yield file paths from directory, optionally recursively, ignoring VCS/virtualenvs."""
     if recursive:
@@ -209,7 +249,9 @@ def resolve_targets(paths: list, recursive: bool = False):
         return
 
     for path in paths:
-        if os.path.islink(path):
+        if path == STDIN_TARGET:
+            yield path
+        elif os.path.islink(path):
             continue
         elif os.path.isdir(path):
             yield from scan_directory(path, recursive=recursive)
@@ -221,7 +263,7 @@ def resolve_targets(paths: list, recursive: bool = False):
 
 def main():
     parser = argparse.ArgumentParser(description='Detect and replace Unicode dash/emdash characters in files')
-    parser.add_argument('files', nargs='*', help='Files or directories to scan (default: current directory)')
+    parser.add_argument('files', nargs='*', help="Files or directories to scan, or '-' for stdin (default: piped stdin, else current directory)")
     parser.add_argument('-r', '--recursive', action='store_true', help='Scan directories recursively')
     parser.add_argument('--fix', action='store_true', help=f"Replace detected Unicode dashes with regular '-' ({REPLACEMENT_UNICODE})")
     parser.add_argument('--dry-run', action='store_true', help='Simulate replacements with --fix without altering files')
@@ -234,6 +276,14 @@ def main():
     # If --dry-run is supplied without --fix, automatically imply fix inspection mode
     if args.dry_run and not args.fix:
         args.fix = True
+
+    if not args.files and stdin_has_data():
+        args.files = [STDIN_TARGET]
+
+    # Filter mode: cleaned text owns stdout, so every report moves to stderr
+    filter_output = sys.stdout.buffer
+    if STDIN_TARGET in args.files and args.fix and not args.dry_run:
+        sys.stdout = sys.stderr
 
     overall_summary = {}
     any_found = False
@@ -249,13 +299,17 @@ def main():
         if verbose:
             print(f"\nProcessing: {filepath}")
 
-        found, file_summary, replaced, is_excluded, file_error = process_file(
-            filepath,
-            verbose=verbose,
-            fix=args.fix,
-            dry_run=args.dry_run,
-            backup=args.backup,
-        )
+        if filepath == STDIN_TARGET:
+            result = process_stdin(filter_output, verbose=verbose and not args.fix, fix=args.fix, dry_run=args.dry_run)
+        else:
+            result = process_file(
+                filepath,
+                verbose=verbose,
+                fix=args.fix,
+                dry_run=args.dry_run,
+                backup=args.backup,
+            )
+        found, file_summary, replaced, is_excluded, file_error = result
 
         if file_error:
             any_errors = True
