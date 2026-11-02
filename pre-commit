@@ -1,8 +1,22 @@
 #!/bin/sh
 # Portable Git pre-commit hook (POSIX sh compatible across macOS, Linux, FreeBSD)
-# Automatically fixes Unicode dashes in staged files before committing.
+# Safely detects and cleans Unicode dashes in staged files without corrupting index.
 
-# Locate Python 3 across systems (/usr/local/bin, /usr/bin, /opt/homebrew/bin, etc.)
+# 1. Chain to repository-local hook if present (.git/hooks/pre-commit)
+# This ensures Husky, lint-staged, or secret scanners are NOT bypassed.
+# --git-path would follow core.hooksPath back to this hook, so build the path by hand.
+COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
+LOCAL_HOOK="$COMMON_DIR/hooks/pre-commit"
+if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
+    # Prevent infinite loop if core.hooksPath points to the same directory
+    HOOK_REAL=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+    LOCAL_REAL=$(cd "$(dirname "$LOCAL_HOOK")" && pwd)/$(basename "$LOCAL_HOOK")
+    if [ "$HOOK_REAL" != "$LOCAL_REAL" ]; then
+        "$LOCAL_HOOK" "$@" || exit $?
+    fi
+fi
+
+# 2. Locate Python 3
 PYTHON_BIN=""
 if command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
@@ -15,29 +29,81 @@ if [ -z "$PYTHON_BIN" ]; then
     exit 0
 fi
 
-# Locate detect_emdash.py in the user's hooks directory
-SCRIPT_PATH="$HOME/.git_hooks/detect_emdash.py"
-if [ ! -f "$SCRIPT_PATH" ]; then
-    echo "[emdash pre-commit] Warning: $SCRIPT_PATH not found, skipping." >&2
-    exit 0
-fi
-
-# Get list of staged files that are not deleted (diff-filter=d)
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=d)
-
-if [ -z "$STAGED_FILES" ]; then
-    exit 0
-fi
-
-# Run detect_emdash.py in fix mode on staged files
-# We pass filenames safely to python
-echo "$STAGED_FILES" | while IFS= read -r file; do
-    if [ -f "$file" ]; then
-        "$PYTHON_BIN" "$SCRIPT_PATH" -q --fix "$file"
-        # Re-stage file if modified
-        git add "$file"
+# Locate detect_emdash.py
+SCRIPT_PATH=""
+if [ -f "$HOME/.git_hooks/detect_emdash.py" ]; then
+    SCRIPT_PATH="$HOME/.git_hooks/detect_emdash.py"
+elif [ -f "$HOME/.local/bin/detect_emdash.py" ]; then
+    SCRIPT_PATH="$HOME/.local/bin/detect_emdash.py"
+else
+    # Fallback to sibling directory
+    SIBLING="$(dirname "$0")/detect_emdash.py"
+    if [ -f "$SIBLING" ]; then
+        SCRIPT_PATH="$SIBLING"
     fi
-done
+fi
+
+if [ -z "$SCRIPT_PATH" ]; then
+    exit 0
+fi
+
+# A broken interpreter must not look like "dashes found" below
+if ! "$PYTHON_BIN" "$SCRIPT_PATH" --help >/dev/null 2>&1; then
+    echo "[emdash pre-commit] Warning: $PYTHON_BIN cannot run $SCRIPT_PATH, skipping dash check." >&2
+    exit 0
+fi
+
+# `git commit <path>` runs on a temporary index, so a hook's `git add` never reaches
+# the real one and leaves it out of step with HEAD.
+case "$(basename "${GIT_INDEX_FILE:-index}")" in
+    next-index-*) PARTIAL_COMMIT=1 ;;
+    *) PARTIAL_COMMIT=0 ;;
+esac
+
+reject() {
+    echo "------------------------------------------------------------------------" >&2
+    echo "[emdash pre-commit] REJECTED: '$file' has Unicode dashes staged, and $1." >&2
+    echo "                    Run: detect_emdash.py --fix -- \"./$file\"" >&2
+    echo "                    then stage the result and commit again." >&2
+    echo "                    Exempt a path in .gitattributes with: <path> -emdash" >&2
+    echo "------------------------------------------------------------------------" >&2
+    exit 1
+}
+
+# 3. Check the staged content of each file, which is what will actually be committed
+TMP_LIST=$(mktemp 2>/dev/null || mktemp -t 'emdash_staged')
+TMP_BLOB=$(mktemp 2>/dev/null || mktemp -t 'emdash_blob')
+trap 'rm -f "$TMP_LIST" "$TMP_BLOB"' EXIT
+
+# -z avoids path quoting; tr keeps the list readable by POSIX `read`, which has no -d
+git diff --cached --name-only -z --diff-filter=d | tr '\000' '\n' > "$TMP_LIST"
+
+while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    # Skip submodules, symlinks, and files removed from the working tree
+    [ -f "$file" ] && [ ! -L "$file" ] || continue
+    case "$(git check-attr emdash -- "$file")" in
+        *": unset") continue ;;
+    esac
+
+    git cat-file blob ":$file" > "$TMP_BLOB" || continue
+    if "$PYTHON_BIN" "$SCRIPT_PATH" -q --exit-code -- "$TMP_BLOB" >/dev/null 2>&1; then
+        continue
+    fi
+
+    # Fixing touches the working tree, so it is only safe when that matches the index
+    if ! git diff --quiet -- "$file"; then
+        reject "the file has unstaged edits"
+    fi
+    if [ "$PARTIAL_COMMIT" -eq 1 ]; then
+        reject "this is a 'git commit <path>' commit"
+    fi
+
+    "$PYTHON_BIN" "$SCRIPT_PATH" -q --fix -- "./$file"
+    if ! "$PYTHON_BIN" "$SCRIPT_PATH" -q --exit-code -- "./$file" >/dev/null 2>&1; then
+        reject "they could not be fixed automatically"
+    fi
+    git add -- "$file"
+done < "$TMP_LIST"
 
 exit 0
-

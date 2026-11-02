@@ -1,0 +1,4 @@
+# Holds the dash lookup table and test fixtures on purpose
+detect_emdash.py -emdash
+test_emdash.py -emdash
+test_hook.py -emdash

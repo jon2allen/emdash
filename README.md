@@ -1,6 +1,6 @@
 # Portable Global Git Hook: Em-Dash & Unicode Dash Cleaner
 
-A portable, cross-platform global Git pre-commit hook that automatically catches and replaces non-standard Unicode dash variants (`-`, `-`, `-`, `-`, `-`, `-`, `-`, etc.) with standard ASCII hyphens (`-`, `U+002D`) upon `git commit`.
+A portable, cross-platform global Git pre-commit hook that automatically catches and replaces non-standard Unicode dash variants (em dash U+2014, en dash U+2013, minus sign U+2212, non-breaking hyphen U+2011, and more) with standard ASCII hyphens (`-`, `U+002D`) upon `git commit`.
 
 Compatible across **macOS**, **Linux** (bash/sh), and **FreeBSD** (sh/csh/tcsh).
 
@@ -10,16 +10,29 @@ Compatible across **macOS**, **Linux** (bash/sh), and **FreeBSD** (sh/csh/tcsh).
 When installed, running `git commit` in **any** Git repository on your machine will:
 1. Identify all currently staged files (excluding deletions).
 2. Scan them with `detect_emdash.py`.
-3. If any Unicode dashes are present, automatically replace them with standard ASCII `-` (`U+002D`).
+3. If any Unicode dashes are staged, automatically replace them with standard ASCII `-` (`U+002D`). Soft hyphens (`U+00AD`) are invisible, so they are deleted instead.
 4. Re-stage the cleaned files before completing the commit.
+
+The commit is **rejected** rather than auto-fixed when fixing could disturb your work: the file has unstaged edits, you ran `git commit <path>`, or the file cannot be written. Files with no staged dashes are never touched.
+
+The hook also runs the repository's own `.git/hooks/pre-commit` first. Hooks in other locations and other hook types are not chained, and commit messages are not scanned.
+
+### Dashes that must stay
+Auto-fix changes string literals as well as prose. Exempt paths in a repository's `.gitattributes`:
+
+```
+tests/fixtures/** -emdash
+locale/** -emdash
+```
 
 ---
 
 ## Directory Contents
-- **`detect_emdash.py`**: Standalone Python 3 scanner and in-place corrector (supports `--fix`, `--dry-run`, `--backup`, `--json`, and `-q`).
+- **`detect_emdash.py`**: Standalone Python 3 scanner and in-place corrector (supports `-r`, `--fix`, `--dry-run`, `--backup`, `--json`, `--exit-code`, and `-q`; requires Python 3.7+).
 - **`pre-commit`**: POSIX `/bin/sh` hook script placed in `~/.git_hooks/`.
 - **`setup.sh`**: Setup installer for macOS and Linux (`sh`/`bash`/`zsh`).
 - **`setup.csh`**: Setup installer for FreeBSD and `csh`/`tcsh` shells.
+- **`test_emdash.py`**, **`test_hook.py`**: Test suite (`python3 -m pytest`).
 
 ---
 
@@ -39,11 +52,13 @@ chmod +x setup.csh
 ./setup.csh
 ```
 
+Both installers prompt by default and accept `--noprompt` / `-y` / `--all`, `--hook-only`, or `--bin-only`. Without a terminal, one of these flags is required.
+
 ---
 
 ## How It Works Under the Hood
 1. Copies `detect_emdash.py` and `pre-commit` into `~/.git_hooks/`.
-2. Runs `git config --global core.hooksPath ~/.git_hooks`.
+2. Runs `git config --global core.hooksPath ~/.git_hooks`, saving any previous value as `core.hooksPathBackup`.
 3. Applies universally to all current and future Git repositories on the system without needing per-repository configuration.
 
 ---
@@ -54,6 +69,10 @@ If you ever want to remove or disable the global hook:
 ```bash
 # Disable global hooks in Git:
 git config --global --unset core.hooksPath
+
+# If setup saved a previous value, restore it:
+git config --global core.hooksPath "$(git config --global core.hooksPathBackup)"
+git config --global --unset core.hooksPathBackup
 
 # Optional: Remove the ~/.git_hooks folder:
 rm -rf ~/.git_hooks

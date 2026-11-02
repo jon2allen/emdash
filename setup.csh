@@ -2,8 +2,12 @@
 # setup.csh - Native FreeBSD / csh / tcsh setup script
 # Supports interactive prompt or --noprompt / -y to install both automatically.
 
-set SCRIPT_DIR = `dirname $0`
+set SCRIPT_DIR = `dirname "$0"`
 set SCRIPT_DIR = `cd "$SCRIPT_DIR" && pwd`
+if ( ! -f "$SCRIPT_DIR/detect_emdash.py" || ! -f "$SCRIPT_DIR/pre-commit" ) then
+    echo "Error: could not find detect_emdash.py and pre-commit next to setup.csh."
+    exit 1
+endif
 set HOOKS_DIR = "$HOME/.git_hooks"
 set BIN_DIR = "$HOME/.local/bin"
 
@@ -12,7 +16,7 @@ set INSTALL_BIN = 0
 set PROMPT_USER = 1
 
 # Parse arguments
-foreach arg ( $argv )
+foreach arg ( $argv:q )
     switch ( "$arg" )
         case "--noprompt":
         case "-y":
@@ -48,8 +52,15 @@ foreach arg ( $argv )
     endsw
 end
 
-# Interactive prompt if no arguments were passed
+# Check non-interactive TTY
 if ( $PROMPT_USER == 1 ) then
+    # In csh, if stdin is not a terminal, do not proceed blindly
+    if ( ! -t 0 ) then
+        echo "Error: Non-interactive shell detected and no flag passed."
+        echo "Please rerun with --noprompt, --hook-only, or --bin-only."
+        exit 1
+    endif
+
     echo "========================================================"
     echo "       Em-Dash & Unicode Dash Cleaner Setup (csh)"
     echo "========================================================"
@@ -109,6 +120,15 @@ endif
 # 2. Install Global Git Hook to ~/.git_hooks
 if ( $INSTALL_HOOK == 1 ) then
     echo "[2/2] Installing Global Git Hook to $HOOKS_DIR..."
+
+    # Check if a previous custom core.hooksPath was configured
+    set PREV_HOOKS = "`git config --global core.hooksPath`"
+    if ( "$PREV_HOOKS" != "" && "$PREV_HOOKS" != "$HOOKS_DIR" ) then
+        echo "      WARNING: Previous global core.hooksPath was set to: $PREV_HOOKS"
+        echo "      Backing up previous setting in git config as 'core.hooksPathBackup'"
+        git config --global core.hooksPathBackup "$PREV_HOOKS"
+    endif
+
     if ( ! -d "$HOOKS_DIR" ) then
         mkdir -p "$HOOKS_DIR"
     endif
@@ -126,7 +146,8 @@ endif
 echo "--------------------------------------------------------"
 echo "Setup completed successfully!"
 if ( $INSTALL_HOOK == 1 ) then
-    echo "* 'git commit' in any repo will auto-clean Unicode dashes in staged files."
+    echo "* 'git commit' in any repo will check and clean Unicode dashes safely."
+    echo "* Note: Any repo-local .git/hooks/pre-commit will continue to run automatically."
 endif
 if ( $INSTALL_BIN == 1 ) then
     echo "* Run 'detect_emdash.py --help' to use the CLI tool manually anytime."

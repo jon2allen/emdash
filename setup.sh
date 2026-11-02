@@ -10,6 +10,7 @@ BIN_DIR="$HOME/.local/bin"
 
 INSTALL_HOOK=0
 INSTALL_BIN=0
+HAS_FLAG=0
 
 # Parse command line options
 for arg in "$@"; do
@@ -17,14 +18,17 @@ for arg in "$@"; do
         --noprompt|-y|--all)
             INSTALL_HOOK=1
             INSTALL_BIN=1
+            HAS_FLAG=1
             ;;
         --hook-only)
             INSTALL_HOOK=1
             INSTALL_BIN=0
+            HAS_FLAG=1
             ;;
         --bin-only)
             INSTALL_HOOK=0
             INSTALL_BIN=1
+            HAS_FLAG=1
             ;;
         --help|-h)
             echo "Usage: ./setup.sh [OPTIONS]"
@@ -44,8 +48,14 @@ for arg in "$@"; do
     esac
 done
 
-# If no flags passed, prompt the user interactively
-if [ "$INSTALL_HOOK" -eq 0 ] && [ "$INSTALL_BIN" -eq 0 ]; then
+# If no flags passed, check if running in an interactive terminal
+if [ "$HAS_FLAG" -eq 0 ]; then
+    if [ ! -t 0 ]; then
+        echo "Error: Non-interactive shell detected and no installation flag passed." >&2
+        echo "Please rerun with --noprompt, --hook-only, or --bin-only." >&2
+        exit 1
+    fi
+
     echo "========================================================"
     echo "       Em-Dash & Unicode Dash Cleaner Setup"
     echo "========================================================"
@@ -57,7 +67,7 @@ if [ "$INSTALL_HOOK" -eq 0 ] && [ "$INSTALL_BIN" -eq 0 ]; then
     echo "  4) Exit without installing"
     echo ""
     printf "Enter choice [1-4] (default: 1): "
-    read -r choice < /dev/tty || choice=""
+    read -r choice || choice=""
 
     case "$choice" in
         1|""|"both"|"b")
@@ -93,8 +103,7 @@ if [ "$INSTALL_BIN" -eq 1 ]; then
     cp "$SCRIPT_DIR/detect_emdash.py" "$BIN_DIR/detect_emdash.py"
     chmod +x "$BIN_DIR/detect_emdash.py"
     echo "      -> Installed: $BIN_DIR/detect_emdash.py"
-    
-    # Check if ~/.local/bin is in PATH
+
     case ":$PATH:" in
         *":$BIN_DIR:"*) ;;
         *)
@@ -107,12 +116,21 @@ fi
 # 2. Install Global Git Hook to ~/.git_hooks
 if [ "$INSTALL_HOOK" -eq 1 ]; then
     echo "[2/2] Installing Global Git Hook to $HOOKS_DIR..."
+    
+    # Check if a previous custom core.hooksPath was configured
+    PREV_HOOKS=$(git config --global core.hooksPath 2>/dev/null || echo "")
+    if [ -n "$PREV_HOOKS" ] && [ "$PREV_HOOKS" != "$HOOKS_DIR" ]; then
+        echo "      WARNING: Previous global core.hooksPath was set to: $PREV_HOOKS"
+        echo "      Backing up previous setting in git config as 'core.hooksPathBackup'"
+        git config --global core.hooksPathBackup "$PREV_HOOKS"
+    fi
+
     mkdir -p "$HOOKS_DIR"
     cp "$SCRIPT_DIR/detect_emdash.py" "$HOOKS_DIR/detect_emdash.py"
     cp "$SCRIPT_DIR/pre-commit" "$HOOKS_DIR/pre-commit"
     chmod +x "$HOOKS_DIR/detect_emdash.py"
     chmod +x "$HOOKS_DIR/pre-commit"
-    
+
     git config --global core.hooksPath "$HOOKS_DIR"
     echo "      -> Installed: $HOOKS_DIR/pre-commit"
     echo "      -> Configured git core.hooksPath = $(git config --global core.hooksPath)"
@@ -121,7 +139,8 @@ fi
 echo "--------------------------------------------------------"
 echo "Setup completed successfully!"
 if [ "$INSTALL_HOOK" -eq 1 ]; then
-    echo "* 'git commit' in any repo will auto-clean Unicode dashes in staged files."
+    echo "* 'git commit' in any repo will check and clean Unicode dashes safely."
+    echo "* Note: Any repo-local .git/hooks/pre-commit will continue to run automatically."
 fi
 if [ "$INSTALL_BIN" -eq 1 ]; then
     echo "* Run 'detect_emdash.py --help' to use the CLI tool manually anytime."
