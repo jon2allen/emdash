@@ -1,22 +1,37 @@
 #!/bin/sh
 # Portable Git pre-commit hook (POSIX sh compatible across macOS, Linux, FreeBSD)
 # Safely detects and cleans Unicode dashes in staged files without corrupting index.
+# The every-file scan is batched into a single Python invocation; only files
+# with dashes go through the per-file fix loop.
 
-# 1. Chain to repository-local hook if present (.git/hooks/pre-commit)
+# Real path of this hook, computed once for loop guards below
+HOOK_REAL=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+
+# Run a chained hook unless it is this very file (prevents infinite loops when
+# core.hooksPath points back here). Exits with the chained hook's status on failure.
+run_chained_hook() {
+    _path=$1
+    shift
+    [ -f "$_path" ] && [ -x "$_path" ] || return 0
+    _real=$(cd "$(dirname "$_path")" && pwd)/$(basename "$_path")
+    [ "$_real" != "$HOOK_REAL" ] || return 0
+    "$_path" "$@" || exit $?
+}
+
+# 1. Chain to the repository-local hook if present (.git/hooks/pre-commit)
 # This ensures Husky, lint-staged, or secret scanners are NOT bypassed.
 # --git-path would follow core.hooksPath back to this hook, so build the path by hand.
 COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null || echo ".git")
 LOCAL_HOOK="$COMMON_DIR/hooks/pre-commit"
-if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
-    # Prevent infinite loop if core.hooksPath points to the same directory
-    HOOK_REAL=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
-    LOCAL_REAL=$(cd "$(dirname "$LOCAL_HOOK")" && pwd)/$(basename "$LOCAL_HOOK")
-    if [ "$HOOK_REAL" != "$LOCAL_REAL" ]; then
-        "$LOCAL_HOOK" "$@" || exit $?
-    fi
-fi
+run_chained_hook "$LOCAL_HOOK" "$@"
 
-# 2. Locate Python 3
+# 2. Chain to sibling hooks sharing this global hooks directory, so the emoji
+# cleaner (preserved as pre-commit-emoji) and any other saved hook still run.
+HOOKS_SIBLINGS=$(dirname "$HOOK_REAL")
+run_chained_hook "$HOOKS_SIBLINGS/pre-commit-emoji" "$@"
+run_chained_hook "$HOOKS_SIBLINGS/pre-commit-legacy" "$@"
+
+# 3. Locate Python 3
 PYTHON_BIN=""
 if command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
@@ -56,40 +71,49 @@ fi
 # `git commit <path>` runs on a temporary index, so a hook's `git add` never reaches
 # the real one and leaves it out of step with HEAD.
 case "$(basename "${GIT_INDEX_FILE:-index}")" in
-    next-index-*) PARTIAL_COMMIT=1 ;;
-    *) PARTIAL_COMMIT=0 ;;
+    next-index-*) PARTIAL_COMMIT=1 ;; *)
+        PARTIAL_COMMIT=0 ;;
 esac
 
 reject() {
     echo "------------------------------------------------------------------------" >&2
     echo "[emdash pre-commit] REJECTED: '$file' has Unicode dashes staged, and $1." >&2
     echo "                    Run: detect_emdash.py --fix -- \"./$file\"" >&2
-    echo "                    then stage the result and commit again." >&2
     echo "                    Exempt a path in .gitattributes with: <path> -emdash" >&2
     echo "------------------------------------------------------------------------" >&2
     exit 1
 }
 
-# 3. Check the staged content of each file, which is what will actually be committed
+# 4. Staged file list stays NUL-delimited end to end: filenames may contain
+# newlines, and -z exists precisely so they survive this pipeline.
 TMP_LIST=$(mktemp 2>/dev/null || mktemp -t 'emdash_staged')
-TMP_BLOB=$(mktemp 2>/dev/null || mktemp -t 'emdash_blob')
-trap 'rm -f "$TMP_LIST" "$TMP_BLOB"' EXIT
+TMP_DIRTY=$(mktemp 2>/dev/null || mktemp -t 'emdash_dirty')
+trap 'rm -f "$TMP_LIST" "$TMP_DIRTY"' EXIT
 
-# -z avoids path quoting; tr keeps the list readable by POSIX `read`, which has no -d
-git diff --cached --name-only -z --diff-filter=d | tr '\000' '\n' > "$TMP_LIST"
+git diff --cached --name-only -z --diff-filter=d > "$TMP_LIST"
+[ -s "$TMP_LIST" ] || exit 0
+
+# 5. One batched scan of every staged blob: git check-attr and git cat-file
+# each run exactly once inside the scanner, and only files whose staged blob
+# contains dashes come back on the dirty list.
+"$PYTHON_BIN" "$SCRIPT_PATH" -q --scan-staged < "$TMP_LIST" > "$TMP_DIRTY"
+SCAN_STATUS=$?
+case "$SCAN_STATUS" in
+    0) exit 0 ;;
+    1) ;;
+    *)
+        echo "[emdash pre-commit] Warning: staged scan failed (status $SCAN_STATUS), skipping dash check." >&2
+        exit 0
+        ;;
+esac
+
+# 6. Fix loop. Detection was NUL-safe; this newline conversion only feeds the
+# rare fixing path: a path that contains a newline cannot be auto-fixed here,
+# so it ends up rejected instead of silently committed.
+tr '\000' '\n' < "$TMP_DIRTY" > "$TMP_LIST"
 
 while IFS= read -r file; do
     [ -z "$file" ] && continue
-    # Skip submodules, symlinks, and files removed from the working tree
-    [ -f "$file" ] && [ ! -L "$file" ] || continue
-    case "$(git check-attr emdash -- "$file")" in
-        *": unset") continue ;;
-    esac
-
-    git cat-file blob ":$file" > "$TMP_BLOB" || continue
-    if "$PYTHON_BIN" "$SCRIPT_PATH" -q --exit-code -- "$TMP_BLOB" >/dev/null 2>&1; then
-        continue
-    fi
 
     # Fixing touches the working tree, so it is only safe when that matches the index
     if ! git diff --quiet -- "$file"; then
@@ -103,7 +127,7 @@ while IFS= read -r file; do
     if ! "$PYTHON_BIN" "$SCRIPT_PATH" -q --exit-code -- "./$file" >/dev/null 2>&1; then
         reject "they could not be fixed automatically"
     fi
-    git add -- "$file"
+    git add -- "$file" || reject "it could not be re-staged (the path may contain a newline); fix it manually"
 done < "$TMP_LIST"
 
 exit 0

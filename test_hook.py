@@ -157,6 +157,67 @@ def test_local_hook_chained(env, tmp_path):
     assert git('commit', '-qm', 'c', check=False).returncode == 1
 
 
+def test_sibling_hook_failure_blocks_commit(env, tmp_path):
+    e, hooks = env
+    sib = os.path.join(hooks, 'pre-commit-emoji')
+    with open(sib, 'w') as f:
+        f.write('#!/bin/sh\nexit 3\n')
+    os.chmod(sib, 0o755)
+    r = tmp_path / 'r'
+    r.mkdir()
+    def git(*args, check=True):
+        return subprocess.run(['git', *args], cwd=r, env=e, check=check,
+                              capture_output=True, text=True)
+    git('config', '--global', 'core.hooksPath', hooks)
+    git('config', '--global', 'user.name', 't')
+    git('config', '--global', 'user.email', 't@example.test')
+    git('init', '-q')
+    (r / 'a').write_text('x\n')
+    git('add', 'a')
+    assert git('commit', '-qm', 'c', check=False).returncode == 1
+
+
+def test_sibling_hook_runs_then_scan_still_fixes(env, tmp_path):
+    e, hooks = env
+    sib = os.path.join(hooks, 'pre-commit-emoji')
+    with open(sib, 'w') as f:
+        f.write('#!/bin/sh\ntouch sibling_ran\n')
+    os.chmod(sib, 0o755)
+    r = tmp_path / 'r'
+    r.mkdir()
+    def git(*args, check=True):
+        return subprocess.run(['git', *args], cwd=r, env=e, check=check,
+                              capture_output=True, text=True)
+    git('config', '--global', 'core.hooksPath', hooks)
+    git('config', '--global', 'user.name', 't')
+    git('config', '--global', 'user.email', 't@example.test')
+    git('init', '-q')
+    (r / 'f').write_bytes(b'a' + EM + b'b\n')
+    git('add', 'f')
+    git('commit', '-qm', 'c')
+    assert (r / 'sibling_ran').exists()
+    assert head(git, 'f') == b'a-b\n'
+
+
+def test_newline_named_file_with_dash_is_rejected(repo):
+    # Filenames may legally contain newlines; detection must not lose them to
+    # a NUL-to-newline conversion (the old hook silently skipped such files).
+    r, git = repo
+    name = 'weird\nname.txt'
+    (r / name).write_bytes(b'a' + EM + b'b\n')
+    git('add', '--', name)
+    assert git('commit', '-qm', 'c', check=False).returncode == 1
+
+
+def test_many_files_commit_quickly(repo):
+    r, git = repo
+    for i in range(50):
+        (r / f'f{i}').write_text(f'file {i}\n')
+    git('add', '.')
+    git('commit', '-qm', 'c')
+    assert head(git, 'f49') == b'file 49\n'
+
+
 def run_cli(tmp_path, *args):
     return subprocess.run([sys.executable, os.path.join(SRC, 'detect_emdash.py'), *args],
                           cwd=tmp_path, capture_output=True, text=True)
