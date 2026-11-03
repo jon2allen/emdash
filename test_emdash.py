@@ -7,7 +7,8 @@ SCRIPT_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "detect_em
 
 
 def run_emdash(*args):
-    return subprocess.run([sys.executable, SCRIPT_PATH, *args], capture_output=True, text=True)
+    return subprocess.run([sys.executable, SCRIPT_PATH, *args],
+                          capture_output=True, text=True, encoding="utf-8")
 
 
 import sys
@@ -67,6 +68,20 @@ def test_quiet_mode_silence():
         res = run_emdash("-q", path)
         assert res.returncode == 0
         assert res.stdout == ""
+    finally:
+        os.remove(path)
+
+
+def test_detection_reports_each_line_once():
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt", encoding="utf-8") as f:
+        f.write("a \u2014 b \u2010\nclean\nlast \u2013\n")
+        path = f.name
+    try:
+        res = run_emdash(path)
+        assert res.returncode == 0
+        assert res.stdout.count(":1:") == 1
+        assert ":3:" in res.stdout
+        assert ":2:" not in res.stdout
     finally:
         os.remove(path)
 

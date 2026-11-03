@@ -53,42 +53,71 @@ def is_self_script(filepath: str) -> bool:
         return False
 
 
+def find_dashes(text: str):
+    """Yield (start, end, category, char) for every Unicode dash variant in text."""
+    for i, ch in enumerate(text):
+        info = CHAR_TO_CATEGORY.get(ch)
+        if info:
+            yield (i, i + 1, info[0], ch)
+
+
+def summarize_clusters(clusters) -> dict:
+    """Categorize and count dash clusters.
+    Returns a dict of category -> {count, char, unicode_format, unicode_escape}.
+    """
+    found = {}
+    for _start, _end, category, dash_char in clusters:
+        if category not in found:
+            _cat, unicode_format, unicode_escape = CHAR_TO_CATEGORY[dash_char]
+            found[category] = {
+                'count': 0,
+                'char': dash_char,
+                'unicode_format': unicode_format,
+                'unicode_escape': unicode_escape,
+            }
+        found[category]['count'] += 1
+    return found
+
+
 def categorize_dashes(text: str) -> dict:
     """Categorize and count specific dash variants found in text.
-    Returns a dict of category -> {count, char, unicode_format, unicode_escape}.
     Does NOT modify the input text.
     """
-    intersections = TARGET_CHARS.intersection(text)
-    if not intersections:
-        return {}
+    return summarize_clusters(find_dashes(text))
 
-    found_categories = {}
-    for dash_char in intersections:
-        category, unicode_format, unicode_escape = CHAR_TO_CATEGORY[dash_char]
-        found_categories[category] = {
-            'count': text.count(dash_char),
-            'char': dash_char,
-            'unicode_format': unicode_format,
-            'unicode_escape': unicode_escape,
-        }
-    return found_categories
+
+def apply_clusters(text: str, clusters) -> tuple:
+    """Rewrite text given a precomputed cluster list (one pass, no rescanning).
+    Returns (new_text, replacement_count).
+    """
+    out = []
+    pos = 0
+    total = 0
+    for start, end, _category, dash_char in clusters:
+        out.append(text[pos:start])
+        # Invisible characters are deleted: a visible '-' would change the text
+        out.append('' if dash_char in REMOVE_CHARS else REPLACEMENT_CHAR)
+        total += 1
+        pos = end
+    out.append(text[pos:])
+    return ''.join(out), total
 
 
 def replace_dashes_in_text(text: str) -> tuple:
     """Replace target dash variants with ASCII hyphen-minus ('-'), deleting REMOVE_CHARS.
     Returns (new_text, replacement_count).
     """
-    total_replaced = 0
-    new_chars = []
-    for ch in text:
-        if ch in REMOVE_CHARS:
-            total_replaced += 1
-        elif ch in TARGET_CHARS:
-            new_chars.append(REPLACEMENT_CHAR)
-            total_replaced += 1
-        else:
-            new_chars.append(ch)
-    return ''.join(new_chars), total_replaced
+    return apply_clusters(text, find_dashes(text))
+
+
+def _line_starts(content: str) -> list:
+    """Offsets where each line begins, in order (line i starts at starts[i])."""
+    starts = [0]
+    pos = content.find('\n')
+    while pos != -1:
+        starts.append(pos + 1)
+        pos = content.find('\n', pos + 1)
+    return starts
 
 
 def process_file(filepath: str, verbose: bool = True, fix: bool = False, dry_run: bool = False, backup: bool = False) -> tuple:
@@ -119,33 +148,35 @@ def process_file(filepath: str, verbose: bool = True, fix: bool = False, dry_run
                 print(f"Skipping binary file: {filepath}", file=sys.stderr)
             return False, {}, 0, False, False
 
-        # Split preserving newlines to keep exact line numbering aligned
-        lines = content.split('\n')
-        for line_num, line in enumerate(lines, 1):
-            categories = categorize_dashes(line)
-            if categories:
-                if verbose:
-                    prefix = "[SELF-DEFINITION] " if is_excluded else ""
-                    display_line = line.rstrip('\r')
-                    print(f"{prefix}{filepath}:{line_num}: {display_line}")
-                dash_found = True
+        # Single pass: detect every dash once, then report and fix from it
+        clusters = list(find_dashes(content))
+        if clusters:
+            dash_found = True
 
-                for category, data in categories.items():
-                    if category not in file_summary:
-                        file_summary[category] = {
-                            'count': 0,
-                            'char': data['char'],
-                            'unicode_format': data['unicode_format'],
-                            'unicode_escape': data['unicode_escape'],
-                        }
-                    file_summary[category]['count'] += data['count']
+            if verbose:
+                prefix = "[SELF-DEFINITION] " if is_excluded else ""
+                starts = _line_starts(content)
+                line_idx = 0
+                last_printed = -1
+                for start, _end, _category, _cluster in clusters:
+                    while line_idx + 1 < len(starts) and starts[line_idx + 1] <= start:
+                        line_idx += 1
+                    if line_idx != last_printed:
+                        line_end = content.find('\n', starts[line_idx])
+                        if line_end == -1:
+                            line_end = len(content)
+                        display_line = content[starts[line_idx]:line_end].rstrip('\r')
+                        print(f"{prefix}{filepath}:{line_idx + 1}: {display_line}")
+                        last_printed = line_idx
+
+            file_summary = summarize_clusters(clusters)
 
         if fix and dash_found:
             if is_excluded:
                 if verbose:
                     print(f"[SKIPPED FIX] Excluded self script from replacement: {filepath}")
             else:
-                new_content, count_to_replace = replace_dashes_in_text(content)
+                new_content, count_to_replace = apply_clusters(content, clusters)
                 if count_to_replace > 0:
                     if dry_run:
                         replacements_made = count_to_replace
@@ -203,25 +234,34 @@ def process_stdin(output, verbose: bool = True, fix: bool = False, dry_run: bool
     """
     # surrogateescape round-trips any non-UTF-8 bytes unchanged
     content = sys.stdin.buffer.read().decode('utf-8', 'surrogateescape')
-    file_summary = {}
-    for line_num, line in enumerate(content.split('\n'), 1):
-        categories = categorize_dashes(line)
-        if categories and verbose:
-            display_line = line.rstrip('\r').encode('utf-8', 'surrogateescape').decode('utf-8', 'replace')
-            print(f"<stdin>:{line_num}: {display_line}")
-        for category, data in categories.items():
-            if category in file_summary:
-                file_summary[category]['count'] += data['count']
-            else:
-                file_summary[category] = dict(data)
+    clusters = list(find_dashes(content))
 
-    new_content, replacements_made = replace_dashes_in_text(content)
+    file_summary = {}
+    if clusters:
+        if verbose:
+            starts = _line_starts(content)
+            line_idx = 0
+            last_printed = -1
+            for start, _end, _category, _cluster in clusters:
+                while line_idx + 1 < len(starts) and starts[line_idx + 1] <= start:
+                    line_idx += 1
+                if line_idx != last_printed:
+                    line_end = content.find('\n', starts[line_idx])
+                    if line_end == -1:
+                        line_end = len(content)
+                    display_line = content[starts[line_idx]:line_end].rstrip('\r')
+                    display_line = display_line.encode('utf-8', 'surrogateescape').decode('utf-8', 'replace')
+                    print(f"<stdin>:{line_idx + 1}: {display_line}")
+                    last_printed = line_idx
+        file_summary = summarize_clusters(clusters)
+
+    new_content, replacements_made = apply_clusters(content, clusters)
     if not fix:
         replacements_made = 0
     elif not dry_run:
         output.write(new_content.encode('utf-8', 'surrogateescape'))
         output.flush()
-    return bool(file_summary), file_summary, replacements_made, False, False
+    return bool(clusters), file_summary, replacements_made, False, False
 
 
 def scan_directory(path: str, recursive: bool = False):
