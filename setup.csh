@@ -132,6 +132,31 @@ if ( $INSTALL_HOOK == 1 ) then
     if ( ! -d "$HOOKS_DIR" ) then
         mkdir -p "$HOOKS_DIR"
     endif
+
+    # Preserve a different hook already occupying the pre-commit slot (for
+    # example the emoji cleaner). The new hook chains to pre-commit-emoji /
+    # pre-commit-legacy siblings, so preserved hooks keep running.
+    if ( -f "$HOOKS_DIR/pre-commit" ) then
+        cmp -s "$HOOKS_DIR/pre-commit" "$SCRIPT_DIR/pre-commit"
+        if ( $status != 0 ) then
+            set PRESERVE_AS = "$HOOKS_DIR/pre-commit-legacy"
+            grep -q "detect_emoji" "$HOOKS_DIR/pre-commit"
+            if ( $status == 0 ) then
+                set PRESERVE_AS = "$HOOKS_DIR/pre-commit-emoji"
+            endif
+            # Never overwrite a previously preserved hook: bump the numeric suffix
+            if ( -f "$PRESERVE_AS" ) then
+                @ N = 1
+                while ( -f "$PRESERVE_AS.$N" )
+                    @ N = $N + 1
+                end
+                set PRESERVE_AS = "$PRESERVE_AS.$N"
+            endif
+            mv "$HOOKS_DIR/pre-commit" "$PRESERVE_AS"
+            echo "      NOTE: existing pre-commit hook preserved as `basename $PRESERVE_AS` (chained automatically)."
+        endif
+    endif
+
     cp "$SCRIPT_DIR/detect_emdash.py" "$HOOKS_DIR/detect_emdash.py"
     cp "$SCRIPT_DIR/pre-commit" "$HOOKS_DIR/pre-commit"
     chmod +x "$HOOKS_DIR/detect_emdash.py"
