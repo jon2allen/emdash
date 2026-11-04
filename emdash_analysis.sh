@@ -9,11 +9,11 @@ echo "========================================================================"
 echo " 1. Running Test Suite (pytest)"
 echo "========================================================================"
 if command -v uv >/dev/null 2>&1; then
-    uv run --with pytest pytest
+    uv run --with pytest pytest -o console_output_style=count
 elif command -v pytest >/dev/null 2>&1; then
-    pytest
+    pytest -o console_output_style=count
 elif python3 -m pytest --version >/dev/null 2>&1; then
-    python3 -m pytest
+    python3 -m pytest -o console_output_style=count
 else
     echo "Warning: pytest not found via uv or python3; skipping unit tests." >&2
 fi
