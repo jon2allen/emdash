@@ -17,8 +17,8 @@ Normalization (default):
 
 --strict counts only U+2014 runs, exactly as the paper does.
 
-Dash characters are written as escapes so the dash-cleaning hook leaves
-this file alone.
+Dash characters are built with chr() so the file stays pure ASCII and the
+dash-cleaning hook leaves it alone.
 """
 import argparse
 import json
@@ -26,14 +26,15 @@ import os
 import re
 import sys
 
-EM_DASH = '-'
-TWO_EM_DASH = '-'
-THREE_EM_DASH = '-'
+EM_DASH = chr(0x2014)
+TWO_EM_DASH = chr(0x2E3A)
+THREE_EM_DASH = chr(0x2E3B)
+RIGHT_QUOTE = chr(0x2019)
 
 STRICT_DASH_RE = re.compile(EM_DASH + '+')
 NORMALIZED_DASH_RE = re.compile('[' + EM_DASH + TWO_EM_DASH + THREE_EM_DASH + ']+|-{2,}')
 # A word: letters/digits, optionally joined by single hyphens or apostrophes
-WORD_RE = re.compile(r"[^\W_]+(?:[-'’][^\W_]+)*")
+WORD_RE = re.compile(r"[^\W_]+(?:[-'" + RIGHT_QUOTE + r"][^\W_]+)*")
 
 GUTENBERG_START_RE = re.compile(r'^\*\*\* ?START OF (THE|THIS) PROJECT GUTENBERG.*$', re.M | re.I)
 GUTENBERG_END_RE = re.compile(r'^\*\*\* ?END OF (THE|THIS) PROJECT GUTENBERG.*$', re.M | re.I)

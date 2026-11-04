@@ -2,3 +2,5 @@
 detect_emdash.py -emdash
 test_emdash.py -emdash
 test_hook.py -emdash
+emdash_density.py -emdash
+test_density.py -emdash

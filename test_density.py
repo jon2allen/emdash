@@ -8,7 +8,8 @@ import pytest
 from emdash_density import measure, strip_gutenberg
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'emdash_density.py')
-EM = '-'
+EM = chr(0x2014)
+THREE_EM = chr(0x2E3B)
 
 
 def test_density_formula():
@@ -34,7 +35,7 @@ def test_strict_counts_only_u2014():
 def test_dash_runs_count_once():
     assert measure(f'wait{EM}{EM}what')['em_dashes'] == 1
     assert measure('wait----what')['em_dashes'] == 1
-    assert measure('wait-what')['em_dashes'] == 1
+    assert measure(f'wait{THREE_EM}what')['em_dashes'] == 1
 
 
 def test_hyphenated_compounds_and_contractions_are_one_word():
