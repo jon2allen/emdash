@@ -303,29 +303,29 @@ def resolve_targets(paths: list, recursive: bool = False):
             print(f"Target not found: {path}", file=sys.stderr)
 
 
-def _cat_file_content(stream, spec: bytes):
-    """Read one `git cat-file --batch` response for the given request spec.
-    Returns the blob content, or None when the object is missing.
-    Requests are NUL-terminated (paths may contain newlines), but responses
-    stay LF-framed: "<oid> SP <type> SP <size> LF <content> LF". The size in
-    the header makes the content unambiguous regardless of embedded newlines.
-    """
-    first = stream.read(1)
-    if not first:
-        raise EOFError('cat-file stream ended early')
-    if first == b':':
-        # Missing object: the spec is echoed verbatim ("<spec> missing\\n")
-        # and may itself contain newlines, so consume by known length.
-        stream.read(len(spec) + 8)
-        return None
-    header = first
+def _read_line(stream) -> bytes:
+    """Read up to and including the next LF; raise EOFError if the stream ends."""
+    line = b''
     while True:
         b = stream.read(1)
         if not b:
             raise EOFError('cat-file stream ended early')
         if b == b'\n':
-            break
-        header += b
+            return line
+        line += b
+
+
+def _cat_file_content(stream):
+    """Read one `git cat-file --batch` response.
+    Returns the blob content, or None when the object is missing.
+    Requests are one object id per line; responses are
+    "<oid> SP <type> SP <size> LF <content> LF" or "<request> SP missing LF".
+    The size in the header makes the content unambiguous regardless of
+    embedded newlines.
+    """
+    header = _read_line(stream)
+    if header.endswith(b' missing'):
+        return None
     _oid, _type, size_str = header.split(b' ', 2)
     size = int(size_str)
     content = stream.read(size)
@@ -375,10 +375,36 @@ def scan_staged() -> int:
     if not candidates:
         return 0
 
-    # One git process: fetch every staged blob at once
-    specs = [b':' + p for p in candidates]
+    # One git process: map each candidate path to its staged blob id.
+    # "-z" on ls-files is supported by every git version; the ids are plain hex.
     try:
-        proc = subprocess.Popen(['git', 'cat-file', '--batch', '-z'],
+        ls = subprocess.run(['git', 'ls-files', '--stage', '-z'],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as e:
+        print(f"[emdash pre-commit] cannot run git ls-files: {e}", file=sys.stderr)
+        return 2
+    if ls.returncode != 0:
+        print(f"[emdash pre-commit] git ls-files failed: "
+              f"{ls.stderr.decode('utf-8', 'replace').strip()}", file=sys.stderr)
+        return 2
+    oids = {}
+    for rec in ls.stdout.split(b'\x00'):
+        if not rec:
+            continue
+        meta, _, path = rec.partition(b'\t')
+        parts = meta.split(b' ')
+        if len(parts) == 3 and parts[2] == b'0':  # stage 0 only
+            oids[path] = parts[1]
+    missing = [c for c in candidates if c not in oids]
+    if missing:
+        print(f"[emdash pre-commit] no staged blob for {os.fsdecode(missing[0])!r}", file=sys.stderr)
+        return 2
+    specs = [oids[c] for c in candidates]
+
+    # One git process: fetch every staged blob at once. Requests are newline
+    # terminated object ids, so no path ever reaches cat-file.
+    try:
+        proc = subprocess.Popen(['git', 'cat-file', '--batch'],
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     except OSError as e:
         print(f"[emdash pre-commit] cannot run git cat-file: {e}", file=sys.stderr)
@@ -389,7 +415,7 @@ def scan_staged() -> int:
     def feed():
         try:
             for s in specs:
-                proc.stdin.write(s + b'\x00')
+                proc.stdin.write(s + b'\n')
             proc.stdin.close()
         except OSError:
             pass
@@ -398,15 +424,15 @@ def scan_staged() -> int:
     writer.start()
     dirty = []
     try:
-        for spec in specs:
-            content = _cat_file_content(proc.stdout, spec)
+        for path in candidates:
+            content = _cat_file_content(proc.stdout)
             if content is None:
                 continue
             if b'\x00' in content:
                 continue  # binary
             text = content.decode('utf-8', 'surrogateescape')
             if TARGET_CHARS.intersection(text):
-                dirty.append(spec[1:])
+                dirty.append(path)
     except (EOFError, ValueError) as e:
         print(f"[emdash pre-commit] failed to parse cat-file output: {e}", file=sys.stderr)
         return 2

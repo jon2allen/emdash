@@ -28,7 +28,7 @@ locale/** -emdash
 ---
 
 ## Directory Contents
-- **`detect_emdash.py`**: Standalone Python 3 scanner and in-place corrector (supports `-r`, `--fix`, `--dry-run`, `--backup`, `--json`, `--exit-code`, and `-q`; requires Python 3.7+).
+- **`detect_emdash.py`**: Standalone Python 3 scanner and in-place corrector (supports `-r`, `--fix`, `--dry-run`, `--backup`, `--json`, `--exit-code`, and `-q`; requires Python 3.7+; tested on 3.10.12).
 - **`pre-commit`**: POSIX `/bin/sh` hook script placed in `~/.git_hooks/`.
 - **`setup.sh`**: Setup installer for macOS and Linux (`sh`/`bash`/`zsh`).
 - **`setup.csh`**: Setup installer for FreeBSD and `csh`/`tcsh` shells.
@@ -76,7 +76,13 @@ With `--fix`, the cleaned text goes to stdout and reports go to stderr.
 2. Runs `git config --global core.hooksPath ~/.git_hooks`, saving any previous value as `core.hooksPathBackup`.
 3. Applies universally to all current and future Git repositories on the system without needing per-repository configuration.
 
-The hook hands the NUL-delimited list of staged paths to `detect_emdash.py --scan-staged`, which filters exempt paths (`git check-attr`) and reads every staged blob (`git cat-file --batch`) in one batched pass: a 50-file commit pays one Python startup instead of fifty. The staged path list is NUL-delimited end to end, so filenames containing newlines are detected; only the rare fixing loop falls back to newline splitting, and a path it cannot round-trip is rejected rather than silently committed. Requires Git 2.20+ for the batched object protocol.
+The hook hands the NUL-delimited list of staged paths to `detect_emdash.py --scan-staged`, which filters exempt paths (`git check-attr`) and reads every staged blob (`git cat-file --batch`) in one batched pass: a 50-file commit pays one Python startup instead of fifty. The staged path list is NUL-delimited end to end, so filenames containing newlines are detected; only the rare fixing loop falls back to newline splitting, and a path it cannot round-trip is rejected rather than silently committed. Staged blob IDs come from `git ls-files --stage -z`, and blobs are requested by ID with plain `git cat-file --batch`, so the batch needs no newer Git flags.
+
+### Tested versions
+- Git 2.34.1
+- Python 3.10.12, with pytest 9.2.0 (`python3 -m pytest`, 36 tests passing)
+
+Other Git and Python versions have not been tested.
 
 ---
 

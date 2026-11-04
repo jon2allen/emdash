@@ -102,8 +102,8 @@ case "$SCAN_STATUS" in
     0) exit 0 ;;
     1) ;;
     *)
-        echo "[emdash pre-commit] Warning: staged scan failed (status $SCAN_STATUS), skipping dash check." >&2
-        exit 0
+        echo "[emdash pre-commit] Error: staged scan failed (status $SCAN_STATUS); commit blocked. Fix the scanner or bypass once with --no-verify." >&2
+        exit 1
         ;;
 esac
 
