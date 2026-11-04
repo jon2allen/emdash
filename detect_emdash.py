@@ -55,6 +55,8 @@ def is_self_script(filepath: str) -> bool:
 
 def find_dashes(text: str):
     """Yield (start, end, category, char) for every Unicode dash variant in text."""
+    if not TARGET_CHARS.intersection(text):
+        return
     for i, ch in enumerate(text):
         info = CHAR_TO_CATEGORY.get(ch)
         if info:
@@ -110,11 +112,14 @@ def replace_dashes_in_text(text: str) -> tuple:
     return apply_clusters(text, find_dashes(text))
 
 
-def count_words(text: str) -> int:
-    """Count words: tokens split on whitespace and Unicode dashes that contain a letter or digit."""
-    for ch in TARGET_CHARS:
-        if ch in text:
-            text = text.replace(ch, ' ')
+def count_words(text: str, dashes=None) -> int:
+    """Count words: tokens split on whitespace and Unicode dashes that contain a letter or digit.
+    dashes: the dash characters present in text, if the caller already has them.
+    """
+    if dashes is None:
+        dashes = TARGET_CHARS.intersection(text)
+    for ch in dashes:
+        text = text.replace(ch, ' ')
     return sum(1 for token in text.split() if any(c.isalnum() for c in token))
 
 
@@ -122,10 +127,10 @@ def dash_density(text: str) -> dict:
     """Dashes per 1,000 words: density = (dash count / word count) x 1000.
     Reports em dashes (U+2014) and all Unicode dash variants; 0.0 when there are no words.
     """
-    words = count_words(text)
-    summary = categorize_dashes(text)
-    em_dashes = summary.get('EM_DASH', {}).get('count', 0)
-    all_dashes = sum(data['count'] for data in summary.values())
+    dashes = TARGET_CHARS.intersection(text)
+    words = count_words(text, dashes)
+    em_dashes = text.count('\u2014')
+    all_dashes = sum(text.count(ch) for ch in dashes)
     per_k = (lambda n: n * 1000 / words) if words else (lambda n: 0.0)
     return {
         'words': words,
