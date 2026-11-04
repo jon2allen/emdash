@@ -153,3 +153,9 @@ To temporarily bypass the hook on a single commit:
 git commit --no-verify
 ```
 
+---
+
+## References
+- Freeburg, E. M. (2026). *The Last Fingerprint: How Markdown Training Shapes LLM Prose*. [arXiv:2603.27006](https://arxiv.org/abs/2603.27006) (Empirical evaluation and analysis of em dash frequencies across large language model prose; research code: [emfreeburg/the-last-fingerprint](https://github.com/emfreeburg/the-last-fingerprint)).
+- Project Gutenberg. Public-domain literary corpus texts retrieved for benchmarking historical 19th-century typography.
+
