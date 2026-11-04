@@ -33,6 +33,8 @@ locale/** -emdash
 - **`setup.sh`**: Setup installer for macOS and Linux (`sh`/`bash`/`zsh`).
 - **`setup.csh`**: Setup installer for FreeBSD and `csh`/`tcsh` shells.
 - **`test_emdash.py`**, **`test_hook.py`**: Test suite (`python3 -m pytest`).
+- **`emdash_analysis.sh`**: Runner script that executes unit tests and generates the density analysis table across the testbed.
+- **`pull_melville.sh`**: Fetches Melville and 19th-century public-domain texts into `melville/`.
 
 ---
 
@@ -101,9 +103,33 @@ detect_emdash.py --density -r docs/ --json
 cat draft.md | detect_emdash.py --density
 ```
 
-Inspired by the em dash frequency metric in ["The Last Fingerprint: How Markdown Training Shapes LLM Prose"](https://arxiv.org/html/2603.27006v1) (arXiv:2603.27006), which normalizes em dash counts per 1,000 words.
+Inspired by the em dash frequency metric in ["The Last Fingerprint: How Markdown Training Shapes LLM Prose"](https://arxiv.org/html/2603.27006v1) (arXiv:2603.27006; see their research repository at [emfreeburg/the-last-fingerprint](https://github.com/emfreeburg/the-last-fingerprint)), which measures em dash frequency per 1,000 words:
 
-The `melville/` directory (fetched by `pull_melville.sh`) is a testbed of public-domain novels.
+- **Calculation note:** The reference script in the paper's study (`run_study.py`) performs a naive whitespace split (`text.split()`), which causes words conjoined by unspaced em dashes (e.g. `word\u2014word` (`word` + U+2014 + `word`)) to be counted as a single word. `detect_emdash.py` splits on Unicode dashes as well as whitespace, ensuring conjoined words are recognized as distinct words and yielding a slightly more accurate word count denominator. Because em dashes represent a small fraction of overall vocabulary, this subtle distinction does not diminish or alter the broader empirical findings of the paper.
+
+### Melville & 19th-Century Testbed
+The `melville/` directory (fetched by `pull_melville.sh`) serves as a testbed of public-domain literature. Running `./detect_emdash.py --density melville/*.txt` produces:
+
+```
+File                                     Words  Em dashes    Em/1k  All dashes   All/1k
+-----------------------------------------------------------------------------------------
+melville/a_tale_of_two_cities.txt       138903          2     0.01           2     0.01
+melville/bartleby_the_scrivener.txt      14479        110     7.60         110     7.60
+melville/benito_cereno.txt               82719        581     7.02         581     7.02
+melville/billy_budd.txt                 119289          0     0.00           0     0.00
+melville/frankenstein.txt                78198        126     1.61         126     1.61
+melville/huckleberry_finn.txt           115170       1127     9.79        1127     9.79
+melville/moby_dick_full.txt             217395       1730     7.96        1730     7.96
+melville/omoo.txt                       105282        545     5.18         545     5.18
+melville/pierre.txt                     155102          2     0.01           2     0.01
+melville/the_confidence_man.txt          96628          2     0.02           2     0.02
+melville/typee.txt                      116331          2     0.02           2     0.02
+melville/white_jacket.txt               143392       1005     7.01        1005     7.01
+-----------------------------------------------------------------------------------------
+TOTAL                                  1382888       5232     3.78        5232     3.78
+Density = (dash count / word count) x 1000
+```
+*(Note: Variations across digital editions reflect Project Gutenberg transcription styles, where some texts transcribe em dashes as literal Unicode `U+2014` while others used typewriter `--` conventions).*
 
 ---
 
