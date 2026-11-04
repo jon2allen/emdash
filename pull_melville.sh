@@ -21,7 +21,7 @@ wget -q -O melville/typee.txt https://www.gutenberg.org/ebooks/1900.txt.utf-8
 wget -q -O melville/white_jacket.txt https://www.gutenberg.org/ebooks/10712.txt.utf-8
 wget -q -O melville/pierre.txt https://www.gutenberg.org/cache/epub/34970/pg34970.txt
 wget -q -O melville/the_confidence_man.txt https://www.gutenberg.org/ebooks/21816.txt.utf-8
-wget -q -O melville/billy_budd.txt https://www.gutenberg.org/ebooks/2450.txt.utf-8
+wget -q -O melville/billy_budd.txt https://www.gutenberg.org/ebooks/76513.txt.utf-8
 wget -q -O melville/benito_cereno.txt https://www.gutenberg.org/ebooks/15859.txt.utf-8
 
 echo "Downloading non-Melville classics..."
