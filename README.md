@@ -32,7 +32,8 @@ locale/** -emdash
 - **`pre-commit`**: POSIX `/bin/sh` hook script placed in `~/.git_hooks/`.
 - **`setup.sh`**: Setup installer for macOS and Linux (`sh`/`bash`/`zsh`).
 - **`setup.csh`**: Setup installer for FreeBSD and `csh`/`tcsh` shells.
-- **`test_emdash.py`**, **`test_hook.py`**: Test suite (`python3 -m pytest`).
+- **`emdash_density.py`**: Em dashes per 1,000 words for a set of texts (see Em Dash Density).
+- **`test_emdash.py`**, **`test_hook.py`**, **`test_density.py`**: Test suite (`python3 -m pytest`).
 
 ---
 
@@ -83,6 +84,46 @@ The hook hands the NUL-delimited list of staged paths to `detect_emdash.py --sca
 - Python 3.10.12, with pytest 9.2.0 (`python3 -m pytest`, 36 tests passing)
 
 Other Git and Python versions have not been tested.
+
+---
+
+## Em Dash Density
+`emdash_density.py` measures em dashes per 1,000 words, the metric used in Freeburg, ["The Last Fingerprint: How Markdown Training Shapes LLM Prose"](https://arxiv.org/html/2603.27006v1) (arXiv:2603.27006):
+
+```
+density = (em dashes / words) x 1000
+```
+
+```bash
+python3 emdash_density.py              # the melville/ testbed
+python3 emdash_density.py --strict     # count U+2014 only, as the paper does
+python3 emdash_density.py --json path/to/texts
+```
+
+By default the counts are normalized so different editions can be compared:
+- The Project Gutenberg license header and footer are stripped (`--keep-boilerplate` keeps them).
+- Each run of U+2014, of two or more hyphens (`--`), or a two-em/three-em dash counts as one em dash. Many Gutenberg editions write the em dash as `--`, so `--strict` reports 0 for them.
+- Dashes act as word breaks. Hyphenated compounds (`man-of-war`) and contractions count as one word.
+
+Melville testbed (`melville/`, normalized):
+
+| Text | Density |
+|---|---|
+| Pierre | 12.77 |
+| Adventures of Huckleberry Finn (Twain) | 10.03 |
+| The Confidence-Man | 8.31 |
+| Moby-Dick | 8.03 |
+| Billy Budd and other prose pieces | 7.88 |
+| Bartleby, the Scrivener | 7.60 |
+| The Piazza Tales (incl. Benito Cereno) | 7.20 |
+| White-Jacket | 7.04 |
+| A Tale of Two Cities (Dickens) | 5.30 |
+| Omoo | 5.29 |
+| Typee | 5.24 |
+| Frankenstein (Shelley) | 1.62 |
+| **All 12 texts** | **7.51** |
+
+For comparison, the paper reports a human essay baseline of 3.23 per 1,000 words (range 0.33 to 17.12) and unconstrained LLM output from 0.00 (Llama) to 10.62 (GPT-4.1).
 
 ---
 
