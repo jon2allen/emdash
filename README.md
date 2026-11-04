@@ -28,12 +28,11 @@ locale/** -emdash
 ---
 
 ## Directory Contents
-- **`detect_emdash.py`**: Standalone Python 3 scanner and in-place corrector (supports `-r`, `--fix`, `--dry-run`, `--backup`, `--json`, `--exit-code`, and `-q`; requires Python 3.7+; tested on 3.10.12).
+- **`detect_emdash.py`**: Standalone Python 3 scanner and in-place corrector (supports `-r`, `--fix`, `--dry-run`, `--density`, `--backup`, `--json`, `--exit-code`, and `-q`; requires Python 3.7+; tested on 3.10.12).
 - **`pre-commit`**: POSIX `/bin/sh` hook script placed in `~/.git_hooks/`.
 - **`setup.sh`**: Setup installer for macOS and Linux (`sh`/`bash`/`zsh`).
 - **`setup.csh`**: Setup installer for FreeBSD and `csh`/`tcsh` shells.
-- **`emdash_density.py`**: Em dashes per 1,000 words for a set of texts (see Em Dash Density).
-- **`test_emdash.py`**, **`test_hook.py`**, **`test_density.py`**: Test suite (`python3 -m pytest`).
+- **`test_emdash.py`**, **`test_hook.py`**: Test suite (`python3 -m pytest`).
 
 ---
 
@@ -87,43 +86,24 @@ Other Git and Python versions have not been tested.
 
 ---
 
-## Em Dash Density
-`emdash_density.py` measures em dashes per 1,000 words, the metric used in Freeburg, ["The Last Fingerprint: How Markdown Training Shapes LLM Prose"](https://arxiv.org/html/2603.27006v1) (arXiv:2603.27006):
+## Dash Density
+`detect_emdash.py --density` reports, for each file, how many dashes appear per 1,000 words:
 
 ```
-density = (em dashes / words) x 1000
+density = (dash count / word count) x 1000
 ```
+
+It gives two densities: em dashes (U+2014) only, and all Unicode dash variants. A word is any token, split on whitespace and Unicode dashes, that contains a letter or digit. Every file is measured the same way, and nothing is modified (`--density` cannot be combined with `--fix`).
 
 ```bash
-python3 emdash_density.py              # the melville/ testbed
-python3 emdash_density.py --strict     # count U+2014 only, as the paper does
-python3 emdash_density.py --json path/to/texts
+detect_emdash.py --density melville
+detect_emdash.py --density -r docs/ --json
+cat draft.md | detect_emdash.py --density
 ```
 
-By default the counts are normalized so different editions can be compared:
-- The Project Gutenberg license header and footer are stripped (`--keep-boilerplate` keeps them).
-- Each run of U+2014, of two or more hyphens (`--`), or a two-em/three-em dash counts as one em dash. Many Gutenberg editions write the em dash as `--`, so `--strict` reports 0 for them.
-- Dashes act as word breaks. Hyphenated compounds (`man-of-war`) and contractions count as one word.
+Inspired by the em dash frequency metric in ["The Last Fingerprint: How Markdown Training Shapes LLM Prose"](https://arxiv.org/html/2603.27006v1) (arXiv:2603.27006), which normalizes em dash counts per 1,000 words.
 
-Melville testbed (`melville/`, normalized):
-
-| Text | Density |
-|---|---|
-| Pierre | 12.77 |
-| Adventures of Huckleberry Finn (Twain) | 10.03 |
-| The Confidence-Man | 8.31 |
-| Moby-Dick | 8.03 |
-| Billy Budd and other prose pieces | 7.88 |
-| Bartleby, the Scrivener | 7.60 |
-| The Piazza Tales (incl. Benito Cereno) | 7.20 |
-| White-Jacket | 7.04 |
-| A Tale of Two Cities (Dickens) | 5.30 |
-| Omoo | 5.29 |
-| Typee | 5.24 |
-| Frankenstein (Shelley) | 1.62 |
-| **All 12 texts** | **7.51** |
-
-For comparison, the paper reports a human essay baseline of 3.23 per 1,000 words (range 0.33 to 17.12) and unconstrained LLM output from 0.00 (Llama) to 10.62 (GPT-4.1).
+The `melville/` directory (fetched by `pull_melville.sh`) is a testbed of public-domain novels.
 
 ---
 

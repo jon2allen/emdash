@@ -110,6 +110,94 @@ def replace_dashes_in_text(text: str) -> tuple:
     return apply_clusters(text, find_dashes(text))
 
 
+def count_words(text: str) -> int:
+    """Count words: tokens split on whitespace and Unicode dashes that contain a letter or digit."""
+    for ch in TARGET_CHARS:
+        if ch in text:
+            text = text.replace(ch, ' ')
+    return sum(1 for token in text.split() if any(c.isalnum() for c in token))
+
+
+def dash_density(text: str) -> dict:
+    """Dashes per 1,000 words: density = (dash count / word count) x 1000.
+    Reports em dashes (U+2014) and all Unicode dash variants; 0.0 when there are no words.
+    """
+    words = count_words(text)
+    summary = categorize_dashes(text)
+    em_dashes = summary.get('EM_DASH', {}).get('count', 0)
+    all_dashes = sum(data['count'] for data in summary.values())
+    per_k = (lambda n: n * 1000 / words) if words else (lambda n: 0.0)
+    return {
+        'words': words,
+        'em_dashes': em_dashes,
+        'em_dash_density': per_k(em_dashes),
+        'all_dashes': all_dashes,
+        'all_dash_density': per_k(all_dashes),
+    }
+
+
+def read_text(filepath: str):
+    """Return a file's (or stdin's) text, or None for symlinks, binary, or non-UTF-8 files."""
+    if filepath == STDIN_TARGET:
+        return sys.stdin.buffer.read().decode('utf-8', 'replace')
+    if os.path.islink(filepath):
+        return None
+    try:
+        with open(filepath, 'r', encoding='utf-8', newline='') as f:
+            content = f.read()
+    except UnicodeDecodeError:
+        return None
+    return None if '\x00' in content else content
+
+
+def run_density(args) -> int:
+    """--density mode: print dashes per 1,000 words for each target and in total."""
+    rows = []
+    any_errors = False
+    for filepath in resolve_targets(args.files, args.recursive):
+        try:
+            content = read_text(filepath)
+        except OSError as e:
+            print(f"Error processing {filepath}: {e}", file=sys.stderr)
+            any_errors = True
+            continue
+        if content is None:
+            if not args.quiet and not args.json:
+                print(f"Skipping binary / non-UTF-8 file: {filepath}", file=sys.stderr)
+            continue
+        name = '<stdin>' if filepath == STDIN_TARGET else filepath
+        rows.append({'file': name, **dash_density(content)})
+
+    rows.sort(key=lambda r: r['file'])
+    words = sum(r['words'] for r in rows)
+    em = sum(r['em_dashes'] for r in rows)
+    alld = sum(r['all_dashes'] for r in rows)
+    total = {
+        'words': words,
+        'em_dashes': em,
+        'em_dash_density': em * 1000 / words if words else 0.0,
+        'all_dashes': alld,
+        'all_dash_density': alld * 1000 / words if words else 0.0,
+    }
+
+    if args.json:
+        print(json.dumps({'files': rows, 'total': total, 'errors_encountered': any_errors}, indent=2))
+    elif rows:
+        width = max(len('TOTAL'), max(len(r['file']) for r in rows))
+        print(f"{'File':<{width}}  {'Words':>9}  {'Em dashes':>9}  {'Em/1k':>7}  {'All dashes':>10}  {'All/1k':>7}")
+        print('-' * (width + 54))
+        for r in rows:
+            print(f"{r['file']:<{width}}  {r['words']:>9}  {r['em_dashes']:>9}  {r['em_dash_density']:>7.2f}  "
+                  f"{r['all_dashes']:>10}  {r['all_dash_density']:>7.2f}")
+        print('-' * (width + 54))
+        print(f"{'TOTAL':<{width}}  {words:>9}  {em:>9}  {total['em_dash_density']:>7.2f}  "
+              f"{alld:>10}  {total['all_dash_density']:>7.2f}")
+        print("Density = (dash count / word count) x 1000")
+    elif not args.quiet:
+        print("No text files to measure.")
+    return 1 if (args.exit_code and any_errors) else 0
+
+
 def _line_starts(content: str) -> list:
     """Offsets where each line begins, in order (line i starts at starts[i])."""
     starts = [0]
@@ -459,10 +547,18 @@ def main():
     parser.add_argument('-q', '--quiet', action='store_true', help='Suppress per-file progress output')
     parser.add_argument('--exit-code', action='store_true', help='Exit with code 1 if dashes found or read errors (for CI)')
     parser.add_argument('--scan-staged', action='store_true', help='(hook mode) read NUL-delimited staged paths on stdin and print the ones whose staged blob contains dashes')
+    parser.add_argument('--density', action='store_true', help='Report dashes per 1,000 words for each file instead of scanning/fixing')
     args = parser.parse_args()
 
     if args.scan_staged:
         sys.exit(scan_staged())
+
+    if args.density:
+        if args.fix or args.dry_run:
+            parser.error('--density cannot be combined with --fix or --dry-run')
+        if not args.files and stdin_has_data():
+            args.files = [STDIN_TARGET]
+        sys.exit(run_density(args))
 
     # If --dry-run is supplied without --fix, automatically imply fix inspection mode
     if args.dry_run and not args.fix:

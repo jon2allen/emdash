@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import tempfile
@@ -99,3 +100,55 @@ def test_dry_run_implies_fix():
     finally:
         os.remove(path)
 
+
+
+# --density: dashes per 1,000 words
+from detect_emdash import count_words, dash_density
+
+EM = chr(0x2014)
+EN = chr(0x2013)
+
+
+def test_count_words_splits_on_dashes():
+    assert count_words(f"one two{EM}three") == 3
+    assert count_words(f"pages 10{EN}20") == 3
+    # Hyphenated compounds stay one word; bare punctuation is not a word
+    assert count_words("the man-of-war -- sails !") == 3
+    assert count_words("") == 0
+
+
+def test_dash_density_formula():
+    r = dash_density(f"one two three{EM}four five six seven{EN}eight")
+    assert r["words"] == 8
+    assert r["em_dashes"] == 1 and r["em_dash_density"] == 125.0
+    assert r["all_dashes"] == 2 and r["all_dash_density"] == 250.0
+
+
+def test_dash_density_no_words():
+    assert dash_density(EM)["em_dash_density"] == 0.0
+
+
+def test_density_cli_json(tmp_path):
+    (tmp_path / "a.txt").write_text(f"one{EM}two three four", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("five six seven eight", encoding="utf-8")
+    res = run_emdash("--density", "--json", str(tmp_path))
+    assert res.returncode == 0, res.stderr
+    data = json.loads(res.stdout)
+    assert len(data["files"]) == 2
+    assert data["total"]["words"] == 8
+    assert data["total"]["em_dashes"] == 1
+    assert data["total"]["em_dash_density"] == 125.0
+
+
+def test_density_does_not_modify_files(tmp_path):
+    p = tmp_path / "a.txt"
+    p.write_text(f"x{EM}y", encoding="utf-8")
+    res = run_emdash("--density", str(p))
+    assert res.returncode == 0
+    assert "Em/1k" in res.stdout
+    assert p.read_text(encoding="utf-8") == f"x{EM}y"
+
+
+def test_density_rejects_fix():
+    res = run_emdash("--density", "--fix", "x.txt")
+    assert res.returncode == 2
