@@ -88,6 +88,52 @@ Other Git and Python versions have not been tested.
 
 ---
 
+## How Global Hooks Work (And Why Your Local Hooks Still Run)
+If you are new to Git hooks or worried that installing a global hook might break your existing projects, here is how it works:
+
+### What is a Git Hook?
+A Git hook is simply an automated script that Git runs before or after everyday actions like `git commit`. A pre-commit hook triggers immediately when you run `git commit`, checking or cleaning your staged changes before saving the commit.
+
+### Local vs. Global Hooks
+- **Local Hooks (Default):** Git normally looks for hooks inside a specific repository's hidden `.git/hooks/` folder. If a project uses tools like Husky, pre-commit, ESLint, or Prettier, their scripts live here.
+- **Global Hooks (`~/.git_hooks`):** By setting Git's `core.hooksPath` configuration to `~/.git_hooks`, Git looks at a single central folder on your computer. This means you do not have to copy and paste the dash cleaner into every repository you work on.
+
+### Will Installing This Override My Repository's Existing Hooks?
+No. In standard Git, configuring a global hooks directory would normally cause Git to ignore local `.git/hooks/`.
+
+To prevent this problem, our global hook is built with automatic chaining: every time you commit, it checks for and executes your repository's local hook first before doing anything else.
+
+```
+You run: git commit
+   |
+   v
+[Step 1: Local Repo Hook] (.git/hooks/pre-commit)
+   Runs your project's existing tools first (Husky, linters, tests).
+   If a local test or linter fails, the commit stops immediately!
+   |
+   v
+[Step 2: Sibling Global Hooks] (~/.git_hooks/pre-commit-emoji, etc.)
+   Runs any other global tools you have installed.
+   |
+   v
+[Step 3: Global Dash Cleaner] (detect_emdash.py)
+   Scans and cleans staged files, then finishes the commit.
+```
+
+### What This Means For You
+- **Your existing workflows stay intact:** If a repository has its own tests, linters, or Husky hooks, they will continue to run first as normal.
+- **Repositories without local hooks:** The dash cleaner simply runs on its own.
+- **Safe failures:** If your local test suite or linter fails, the commit aborts right away. The dash cleaner will not even run.
+- **Need to turn off global hooks for one repository?** You can easily override the global setting inside any specific project by running:
+
+```bash
+git config core.hooksPath .git/hooks
+```
+
+This tells Git to only look at that specific repository's `.git/hooks/` folder.
+
+---
+
 ## Dash Density
 `detect_emdash.py --density` reports, for each file, how many dashes appear per 1,000 words:
 
