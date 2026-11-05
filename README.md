@@ -148,10 +148,38 @@ git config --global --unset core.hooksPathBackup
 rm -rf ~/.git_hooks
 ```
 
-To temporarily bypass the hook on a single commit:
-```bash
-git commit --no-verify
+---
+
+## Bypassing or Exempting Dashes
+If a project, file, or commit legitimately needs Unicode dashes, there are three ways to bypass the filter:
+
+### 1. Project or Path Exemption via `.gitattributes` (Recommended)
+Add `-emdash` to `.gitattributes` in the repository root. This is committed with the repo so all collaborators automatically share the exemption:
+
+```gitattributes
+# Exempt specific directories or files:
+tests/fixtures/** -emdash
+locale/** -emdash
 ```
+
+### 2. One-Off Commit Bypass
+To bypass pre-commit hooks for a single commit:
+
+```bash
+git commit --no-verify -m "commit message"
+# or short form:
+git commit -n -m "commit message"
+```
+
+### 3. Disable Global Hooks for One Repository Only
+To disable the global hook for a specific repository while keeping it active everywhere else on your machine:
+
+```bash
+# Inside the repository where you want to disable global hooks:
+git config core.hooksPath .git/hooks
+```
+
+This sets repository-local config to point back to `.git/hooks`, overriding the global `core.hooksPath` for that repo only.
 
 ---
 
